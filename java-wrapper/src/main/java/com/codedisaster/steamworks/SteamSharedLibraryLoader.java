@@ -2,6 +2,47 @@ package com.codedisaster.steamworks;
 
 import java.io.*;
 import java.util.UUID;
+interface OperatingSystem
+{
+	String getPlatformName(String libName, boolean IS_64_BIT);
+}
+
+
+class Windows implements OperatingSystem {
+	@Override
+	public String getPlatformName(String libName, boolean IS_64_BIT) {
+
+		return libName + (IS_64_BIT ? "64" : "") + ".dll";
+	}
+}
+
+class Linux implements OperatingSystem {
+	@Override
+	public String getPlatformName(String libName, boolean IS_64_BIT) {
+		return libName + "lib" + libName + ".so";
+	}
+}
+
+class MacOS implements OperatingSystem {
+	@Override
+	public String getPlatformName(String libName, boolean IS_64_BIT) {
+		return libName + "lib" + libName + ".dylib";
+	}
+}
+
+class OperationSystemsFactory {
+	public static OperatingSystem getOperatingSystem(SteamSharedLibraryLoader.PLATFORM platform) {
+		switch (platform) {
+			case Windows:
+				return new Windows();
+			case Linux:
+				return new Linux();
+			case MacOS:
+				return new MacOS();
+		}
+		return null;
+	}
+}
 
 class SteamSharedLibraryLoader {
 
@@ -46,55 +87,77 @@ class SteamSharedLibraryLoader {
 		IS_64_BIT = osArch.equals("amd64") || osArch.equals("x86_64");
 	}
 
-	private static String getPlatformLibName(String libName) {
-		switch (OS) {
-			case Windows:
-				return libName + (IS_64_BIT ? "64" : "") + ".dll";
-			case Linux:
-				return "lib" + libName + ".so";
-			case MacOS:
-				return "lib" + libName + ".dylib";
+	private static String getPlatformLibName(String libName) throws RuntimeException {
+		return OperationSystemsFactory.getOperatingSystem(OS).getPlatformName(libName, IS_64_BIT);
+	}
+
+	interface SDKStrategy {
+		String getStrategy(PLATFORM OS, boolean IS_64_BIT);
+	}
+
+	static class RedistributableBin implements SDKStrategy {
+
+		@Override
+		public String getStrategy(PLATFORM OS, boolean IS_64_BIT) {
+			File path;
+			switch (OS) {
+				case Windows:
+					path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, IS_64_BIT ? "win64" : "");
+					break;
+				case Linux:
+					path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, "linux64");
+					break;
+				case MacOS:
+					path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, "osx");
+					break;
+				default:
+					return null;
+			}
+			return path.exists() ? path.getPath() : null;
+		}
+	}
+
+	static class LibraryPath implements SDKStrategy {
+
+		@Override
+		public String getStrategy(PLATFORM OS, boolean IS_64_BIT) {
+			File path;
+			switch (OS) {
+				case Windows:
+					path = new File(SDK_LIBRARY_PATH, IS_64_BIT ? "win64" : "win32");
+					break;
+				case Linux:
+					path = new File(SDK_LIBRARY_PATH, "linux64");
+					break;
+				case MacOS:
+					path = new File(SDK_LIBRARY_PATH, "osx");
+					break;
+				default:
+					return null;
+			}
+			return path.exists() ? path.getPath() : null;
+		}
+	}
+
+	static class SDKContext {
+
+		SDKStrategy strategy;
+
+		SDKContext(SDKStrategy strategy){
+			this.strategy = strategy;
 		}
 
-		throw new RuntimeException("Unknown host architecture");
+		String getStrategy(PLATFORM OS, boolean IS_64_BIT){
+			return strategy.getStrategy(OS, IS_64_BIT);
+		}
 	}
 
 	static String getSdkRedistributableBinPath() {
-		File path;
-		switch (OS) {
-			case Windows:
-				path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, IS_64_BIT ? "win64" : "");
-				break;
-			case Linux:
-				path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, "linux64");
-				break;
-			case MacOS:
-				path = new File(SDK_REDISTRIBUTABLE_BIN_PATH, "osx");
-				break;
-			default:
-				return null;
-		}
-
-		return path.exists() ? path.getPath() : null;
+		return new SDKContext(new RedistributableBin()).getStrategy(OS, IS_64_BIT);
 	}
 
 	static String getSdkLibraryPath() {
-		File path;
-		switch (OS) {
-			case Windows:
-				path = new File(SDK_LIBRARY_PATH, IS_64_BIT ? "win64" : "win32");
-				break;
-			case Linux:
-				path = new File(SDK_LIBRARY_PATH, "linux64");
-				break;
-			case MacOS:
-				path = new File(SDK_LIBRARY_PATH, "osx");
-				break;
-			default:
-				return null;
-		}
-
-		return path.exists() ? path.getPath() : null;
+		return new SDKContext(new LibraryPath()).getStrategy(OS, IS_64_BIT);
 	}
 
 	static void loadLibrary(String libraryName, String libraryPath) throws SteamException {
